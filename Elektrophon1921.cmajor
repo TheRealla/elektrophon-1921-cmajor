@@ -1,0 +1,126 @@
+graph Elektrophon1921
+{
+    //========================
+    // INPUTS
+    //========================
+    input stream float pitchControl;   // 0–1 continuous (rotary/ribbon)
+    input stream float ampControl;     // 0–1 (foot pedal style)
+    input stream float timbre;         // 0–1 (very subtle shaping)
+
+    output stream float out;
+
+    //========================
+    // CONSTANTS
+    //========================
+    let sampleRate = 48000.0f;
+    let carrierFreq = 50000.0f; // RF oscillator (~50 kHz)
+
+    //========================
+    // STATE
+    //========================
+    float phase1 = 0.0f;
+    float phase2 = 0.0f;
+
+    float smoothedPitch = 0.0f;
+    float velocity = 0.0f;
+
+    float driftPhase = 0.0f;
+
+    //========================
+    // FUNCTIONS
+    //========================
+
+    float expMap(float x)
+    {
+        // Wide continuous pitch field (~15 Hz → ~12 kHz)
+        return 15.0f * pow(2.0f, x * 9.0f);
+    }
+
+    float softSat(float x)
+    {
+        return x / (1.0f + abs(x));
+    }
+
+    // VERY primitive tone shaping (not modern filter)
+    float primitiveResonance(float x, float amount)
+    {
+        static float z = 0.0f;
+
+        float cutoff = 200.0f + amount * 1500.0f;
+        float c = exp(-2.0f * 3.14159f * cutoff / sampleRate);
+
+        z = (1.0f - c) * x + c * z;
+
+        return x + (x - z) * 0.6f;
+    }
+
+    //========================
+    // MAIN
+    //========================
+    void main()
+    {
+        loop
+        {
+            //----------------------------------
+            // CRANK / ROTARY INERTIA
+            //----------------------------------
+            float target = pitchControl;
+
+            float accel = (target - smoothedPitch) * 0.0015f;
+            velocity += accel;
+            velocity *= 0.985f; // slightly sluggish
+
+            smoothedPitch += velocity;
+
+            //----------------------------------
+            // CONTINUOUS MICROTONAL PITCH
+            //----------------------------------
+            float audioFreq = expMap(smoothedPitch);
+
+            //----------------------------------
+            // ANALOG DRIFT (ESSENTIAL CHARACTER)
+            //----------------------------------
+            driftPhase += 0.00001f;
+            float drift = sin(driftPhase) * 3.0f; // a few Hz wobble
+
+            //----------------------------------
+            // HETERODYNE OSCILLATORS
+            //----------------------------------
+            float varFreq = carrierFreq + audioFreq + drift;
+
+            phase1 += carrierFreq / sampleRate;
+            phase2 += varFreq     / sampleRate;
+
+            if (phase1 > 1.0f) phase1 -= 1.0f;
+            if (phase2 > 1.0f) phase2 -= 1.0f;
+
+            float osc1 = sin(phase1 * 6.28318f);
+            float osc2 = sin(phase2 * 6.28318f);
+
+            //----------------------------------
+            // DIFFERENCE TONE (CORE SOUND)
+            //----------------------------------
+            float raw = osc1 * osc2;
+
+            //----------------------------------
+            // SUBTLE RF INSTABILITY / BEATING
+            //----------------------------------
+            raw += sin((phase1 - phase2) * 6.28318f) * 0.1f;
+
+            //----------------------------------
+            // PRIMITIVE TIMBRE (VERY LIGHT TOUCH)
+            //----------------------------------
+            float shaped = primitiveResonance(raw, timbre);
+
+            //----------------------------------
+            // ALWAYS-ON AMPLITUDE (NO ENVELOPE)
+            //----------------------------------
+            float amp = ampControl; // direct, like a volume pedal
+
+            //----------------------------------
+            // FINAL OUTPUT
+            //----------------------------------
+            out <- softSat(shaped * amp * 1.8f);
+        }
+    }
+}
